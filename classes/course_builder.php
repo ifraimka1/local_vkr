@@ -77,7 +77,7 @@ class course_builder {
         self::create_modules($courseid, --$sectionnumber);
     }
 
-    public static function reset_course($courseid): void {
+    public static function reset_course($courseid): bool {
         global $DB;
 
         $sql = "SELECT id
@@ -96,6 +96,8 @@ class course_builder {
         }
 
         rebuild_course_cache($courseid, true);
+
+        return true;
     }
 
     public static function need_to_prepare($courseid): int|bool {
@@ -170,8 +172,7 @@ class course_builder {
 
         $capabilitiestolock = [
             'moodle/course:manageactivities',
-            'moodle/course:activityvisibility',
-            'moodle/course:deleteactivities'
+            'moodle/course:activityvisibility'
         ];
 
         $roles = role_fix_names(get_all_roles());
