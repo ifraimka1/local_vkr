@@ -26,7 +26,7 @@ namespace local_vkr;
 
 class course_builder {
 
-    private static array $sectionstocreate = [
+    private static array $defaultsections = [
         [
             'name'          => 'Подготовка ВКР',
             'summary'       => '',
@@ -45,7 +45,7 @@ class course_builder {
         ],
     ];
 
-    private static array $modulestocreate = [
+    private static array $defaultmodules = [
         "review" => [
             'name' => 'Отзыв руководителя',
             'dependencies' => [],
@@ -61,12 +61,77 @@ class course_builder {
     ];
 
     public static function prepare_course($courseid): void {
-        global $DB;
-
         $sectionnumber = self::need_to_prepare($courseid);
         if ($sectionnumber === false) {return;}
 
-        foreach (self::$sectionstocreate as $section) {
+        self::set_course_name($courseid);
+        self::create_sections($courseid, $sectionnumber);
+    }
+
+    public static function reset_course($courseid): void {
+        global $DB;
+
+        foreach (self::$defaultsections as $section) {
+            $sectionid = $DB->get_field(
+                'course_sections',
+                'section',
+                ['name' => $section['name'], 'course' => $courseid]
+            );
+            course_delete_section($courseid, $sectionid);
+        }
+
+        rebuild_course_cache($courseid, true);
+    }
+
+    public static function need_to_prepare($courseid): int|bool {
+        global $DB;
+
+        $sections = $DB->get_records('course_sections', ['course' => $courseid]);
+
+        // TODO: сделать названия секций переменными.
+        foreach ($sections as $section) {
+            if ($section->name === self::$defaultsections[0]['name']) {
+                return false;
+            }
+        }
+
+        return count($sections);
+    }
+
+    private static function set_course_name($courseid): void {
+        global $DB;
+
+        $updated_course = new \stdClass();
+        $updated_course->id = $courseid;
+        $updated_course->fullname = "ГЭК - 09.03.02 Информационные системы и технологии 2025";
+        $updated_course->shortname = "ГЭК 09.03.02 2025"; // TODO: сделать название курса переменной.
+
+        $current_course = $DB->get_record('course', ['id' => $courseid]);
+        if ($current_course->shortname === $updated_course->shortname) {return;}
+
+        $condition = $DB->sql_like('shortname', ':shortname');
+        $condition .= " AND id <> :courseid";
+        $params = ['courseid' => $courseid, 'shortname' => $updated_course->shortname.'%'];
+        $duplicates = $DB->get_records_select(
+            'course',
+            $condition,
+            $params,
+            '',
+            'id'
+        );
+
+        $duplicatesamount = count($duplicates);
+        if ($duplicatesamount > 0) {
+            $updated_course->shortname .= ' ' . ++$duplicatesamount;
+        }
+
+        update_course($updated_course);
+    }
+
+    private static function create_sections($courseid, $sectionnumber) {
+        global $DB;
+
+        foreach (self::$defaultsections as $section) {
             $section['course'] = $courseid;
             $section['section'] = ++$sectionnumber;
             $DB->insert_record('course_sections', $section);
@@ -77,50 +142,12 @@ class course_builder {
         self::create_modules($courseid, --$sectionnumber);
     }
 
-    public static function reset_course($courseid): bool {
-        global $DB;
-
-        $sql = "SELECT id
-            FROM {course_sections}
-            WHERE course = :courseid
-              AND (name LIKE 'Подготовка ВКР' OR name LIKE 'Защита ВКР')";
-        $params = ['courseid' => $courseid];
-        $sections = $DB->get_records_sql($sql, $params);
-
-        foreach ($sections as $section) {
-            $modules = $DB->get_records('course_modules', ['course' => $courseid, 'section' => $section->id], '', 'id');
-            foreach($modules as $module) {
-                course_delete_module($module->id);
-            }
-            $DB->delete_records('course_sections', ['id' => $section->id]);
-        }
-
-        rebuild_course_cache($courseid, true);
-
-        return true;
-    }
-
-    public static function need_to_prepare($courseid): int|bool {
-        global $DB;
-
-        $sections = $DB->get_records('course_sections', ['course' => $courseid]);
-
-        // TODO: сделать названия секций переменными.
-        foreach ($sections as $section) {
-            if ($section->name === self::$sectionstocreate[0]['name']) {
-                return false;
-            }
-        }
-
-        return count($sections);
-    }
-
     private static function create_modules($courseid, $sectionnumber): void {
         global $CFG;
         require_once($CFG->dirroot.'/mod/assign/lib.php');
         require_once($CFG->dirroot.'/mod/assign/locallib.php');
 
-        foreach (self::$modulestocreate as $mod) {
+        foreach (self::$defaultmodules as $mod) {
             $createdmodinfo = (object)[
                 'modulename' => 'assign',
                 'section' => $sectionnumber,
@@ -154,14 +181,7 @@ class course_builder {
                 'cmidnumber' => '',
                 'availability' => null,
             ];
-
             $createdmodinfo = create_module($createdmodinfo);
-
-            course_add_cm_to_section(
-                $courseid,
-                $createdmodinfo->coursemodule,
-                $sectionnumber
-            );
 
             self::protect_cm($createdmodinfo->coursemodule);
         }
